@@ -1,11 +1,14 @@
 model:
-  base_learning_rate: 1e-5   # set to target_lr by starting main.py with '--scale_lr False'
+  base_learning_rate: 1e-4   # set to target_lr by starting main.py with '--scale_lr False'
   target: daf_net.dafnet.DAFNetLightning
   params:
     modalities: ['cine']
     num_masks: 4
     learning_rate: 1e-4
     automated_pairing: false
+    use_swa: true
+    swa_start_epoch: 40
+    swa_freq: 1
     
     scheduler_config: # 10000 warmup steps
       target: functions.lr_scheduler.LambdaLinearScheduler
@@ -106,9 +109,9 @@ model:
 data:
   target: dataset.data_module.ACDCSegmentationDataModule
   params:
-    dataset_dirpath: /data2/liaohx/Projects/ACDCDataset/ACDCSingleSliceDataset
+    dataset_dirpath: /public_bme2/bme-qihk/liaohx/PROJECTS/Multimodality_Segmentation/Data/ACDCSingleSliceDataset
     batch_size: 36
-    num_workers: 6
+    num_workers: 8
     is_roi_resample: True
     roi_fixed_pixel_spacing: [0.89, 0.89]
     roi_resample_size: [128, 128]
@@ -160,5 +163,5 @@ lightning:
 
   trainer:
     benchmark: True
-    max_epochs: 1000
+    max_epochs: 10000
     check_val_every_n_epoch: 1 

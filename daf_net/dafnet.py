@@ -2,6 +2,7 @@ import torch
 import torch.nn.functional as F
 import pytorch_lightning as pl
 from torch.optim.lr_scheduler import LambdaLR
+from torch.optim.swa_utils import AveragedModel, SWALR
 from abc import abstractmethod
 
 import sys
@@ -122,7 +123,7 @@ class BaseMultimodal(pl.LightningModule):
         for d_opt in d_opts:
             d_opt.zero_grad()
         
-        d_loss = self._discriminator_step(x1, mask1, x2, mask2, z1_input, z2_input)
+        d_loss, d_losses = self._discriminator_step(x1, mask1, x2, mask2, z1_input, z2_input)
         self.manual_backward(d_loss)
         
         for d_opt in d_opts:
@@ -144,9 +145,11 @@ class BaseMultimodal(pl.LightningModule):
                 scheduler.step()
         
         # Log losses
-        self.log('train/d_loss', d_loss, on_step=True, on_epoch=True)
-        self.log('train/g_loss', g_loss, on_step=True, on_epoch=True)
-        
+        self.log('train/d_total_loss', d_loss, on_step=True, on_epoch=True)
+        for loss_name, loss_value in d_losses.items():
+            self.log(f'train/{loss_name}', loss_value, on_step=True, on_epoch=True)
+            
+        self.log('train/g_total_loss', g_loss, on_step=True, on_epoch=True)
         for loss_name, loss_value in g_losses.items():
             self.log(f'train/{loss_name}', loss_value, on_step=True, on_epoch=True)
         
@@ -169,16 +172,18 @@ class BaseMultimodal(pl.LightningModule):
         mask1 = batch.get(self.modalities[0] + '_mask')
         mask2 = batch.get(self.modalities[1] + '_mask') if len(self.modalities) > 1 else None
         
-        z1_input = batch.get('z1_input', None)
-        z2_input = batch.get('z2_input', None)
+        z1_input = batch.get(f'{self.modalities[0]}_z_input', None)
+        z2_input = batch.get(f'{self.modalities[1]}_z_input', None) if len(self.modalities) > 1 else None
         
-        d_loss = self._discriminator_step(x1, mask1, x2, mask2, z1_input, z2_input)
+        d_loss, d_losses = self._discriminator_step(x1, mask1, x2, mask2, z1_input, z2_input)
         g_loss, g_losses = self._generator_step(x1, mask1, x2, mask2, z1_input, z2_input)
 
         # Log losses
-        self.log('val/d_loss', d_loss, on_step=True, on_epoch=True)
-        self.log('val/g_loss', g_loss, on_step=True, on_epoch=True)
-        
+        self.log('val/d_total_loss', d_loss, on_step=True, on_epoch=True)
+        for loss_name, loss_value in d_losses.items():
+            self.log(f'val/{loss_name}', loss_value, on_step=True, on_epoch=True)
+            
+        self.log('val/g_total_loss', g_loss, on_step=True, on_epoch=True)
         for loss_name, loss_value in g_losses.items():
             self.log(f'val/{loss_name}', loss_value, on_step=True, on_epoch=True)
         
@@ -188,8 +193,8 @@ class BaseMultimodal(pl.LightningModule):
     def predict_step(self, batch, batch_idx):
         x1 = batch.get(self.modalities[0], None)
         x2 = batch.get(self.modalities[1], None) if len(self.modalities) > 1 else None    
-        z1_input = batch.get('z1_input', None)
-        z2_input = batch.get('z2_input', None) if len(self.modalities) > 1 else None
+        z1_input = batch.get(f'{self.modalities[0]}_z_input', None)
+        z2_input = batch.get(f'{self.modalities[1]}_z_input', None) if len(self.modalities) > 1 else None
         
         return self(x1, x2, z1_input, z2_input)
     
@@ -307,6 +312,9 @@ class DAFNetLightning(BaseMultimodal):
                  balancer_config=None,
                  learning_rate=1e-4,
                  scheduler_config=None,
+                 use_swa=True,
+                 swa_start_epoch=40,
+                 swa_freq=1,
                  **kwargs):
         super(DAFNetLightning, self).__init__(learning_rate, loss_config, scheduler_config)
         
@@ -317,6 +325,12 @@ class DAFNetLightning(BaseMultimodal):
         
         self.d_mask_params = d_mask_params
         self.d_image_params = d_image_params
+        
+        # SWA configuration
+        self.use_swa = use_swa
+        self.swa_start_epoch = swa_start_epoch
+        self.swa_freq = swa_freq
+        self.swa_initialized = False
 
         self.anatomy_encoders = instantiate_from_config(anatomy_encoder_config)
         self.modality_encoder = instantiate_from_config(modality_encoder_config)
@@ -333,6 +347,10 @@ class DAFNetLightning(BaseMultimodal):
         
         # Z Regressor for reconstructing sampled Z
         self._build_z_regressor()
+        
+        # Initialize SWA models if enabled
+        if self.use_swa:
+            self._build_swa_models()
     
     def _build_discriminators(self):
         # Mask discriminator
@@ -347,6 +365,74 @@ class DAFNetLightning(BaseMultimodal):
     
     def _build_z_regressor(self):
         self.z_regressor_available = True
+    
+    def _build_swa_models(self):
+        """Build SWA (Stochastic Weight Averaging) models for each component"""
+        # Generator components SWA models
+        self.swa_anatomy_encoders = AveragedModel(self.anatomy_encoders)
+        self.swa_modality_encoder = AveragedModel(self.modality_encoder)
+        self.swa_segmentor = AveragedModel(self.segmentor)
+        self.swa_decoder = AveragedModel(self.decoder)
+        self.swa_anatomy_fuser = AveragedModel(self.anatomy_fuser)
+        
+        # Discriminator SWA models
+        self.swa_d_mask = AveragedModel(self.d_mask)
+        self.swa_d_image1 = AveragedModel(self.d_image1)
+        if hasattr(self, 'd_image2'):
+            self.swa_d_image2 = AveragedModel(self.d_image2)
+        
+        # Balancer SWA model (if exists)
+        if hasattr(self, 'balancer'):
+            self.swa_balancer = AveragedModel(self.balancer)
+            
+    def _update_swa_models(self):
+        """Update SWA models with current model weights"""
+        if not self.use_swa or not self.swa_initialized:
+            return
+            
+        # Update generator components
+        self.swa_anatomy_encoders.update_parameters(self.anatomy_encoders)
+        self.swa_modality_encoder.update_parameters(self.modality_encoder)
+        self.swa_segmentor.update_parameters(self.segmentor)
+        self.swa_decoder.update_parameters(self.decoder)
+        self.swa_anatomy_fuser.update_parameters(self.anatomy_fuser)
+        
+        # Update discriminator components
+        self.swa_d_mask.update_parameters(self.d_mask)
+        self.swa_d_image1.update_parameters(self.d_image1)
+        if hasattr(self, 'd_image2'):
+            self.swa_d_image2.update_parameters(self.d_image2)
+            
+        # Update balancer (if exists)
+        if hasattr(self, 'balancer'):
+            self.swa_balancer.update_parameters(self.balancer)
+    
+    def _use_swa_models(self):
+        """Switch to using SWA models for inference"""
+        if not self.use_swa:
+            print("SWA is not enabled!")
+            return
+            
+        if not self.swa_initialized:
+            print("SWA models are not initialized!")
+            return
+        
+        # Replace current models with SWA models
+        self.anatomy_encoders = self.swa_anatomy_encoders.module
+        self.modality_encoder = self.swa_modality_encoder.module  
+        self.segmentor = self.swa_segmentor.module
+        self.decoder = self.swa_decoder.module
+        self.anatomy_fuser = self.swa_anatomy_fuser.module
+        
+        self.d_mask = self.swa_d_mask.module
+        self.d_image1 = self.swa_d_image1.module
+        if hasattr(self, 'swa_d_image2'):
+            self.d_image2 = self.swa_d_image2.module
+            
+        if hasattr(self, 'swa_balancer'):
+            self.balancer = self.swa_balancer.module
+            
+        print("Switched to SWA models!")
     
     def forward(self, x1, x2=None, z1_input=None, z2_input=None):
         
@@ -460,7 +546,9 @@ class DAFNetLightning(BaseMultimodal):
         with torch.no_grad():
             results = self(x1, x2, z1_input, z2_input)
         
-        d_losses = []
+        # d_losses = []
+        d_losses = {}
+        total_d_loss = 0
         
         # Mask discriminator loss
         # Modality 1
@@ -475,8 +563,9 @@ class DAFNetLightning(BaseMultimodal):
         fake_masks1 = self._sample_batch(fake_masks1, m1.shape[0])
         real_pred1 = self.d_mask(m1)
         fake_pred1 = self.d_mask(fake_masks1)
-        d_mask_loss = torch.mean((real_pred1 - 1) ** 2) + torch.mean(fake_pred1 ** 2)
-        d_losses.append(d_mask_loss)
+        d_mask_loss1 = torch.mean((real_pred1 - 1) ** 2) + torch.mean(fake_pred1 ** 2)
+        d_losses['d_mask_loss'] = d_mask_loss1
+        total_d_loss += d_mask_loss1
         
         # Modality 2
         if x2 is not None:
@@ -492,13 +581,14 @@ class DAFNetLightning(BaseMultimodal):
             real_pred2 = self.d_mask(m2)
             fake_pred2 = self.d_mask(fake_mask2)
             d_mask_loss2 = (torch.mean((real_pred2 - 1) ** 2) + torch.mean(fake_pred2 ** 2))
-            d_losses.append(d_mask_loss2)
-        
+            d_losses['d_mask_loss'] += d_mask_loss2
+            total_d_loss += d_mask_loss2
+            
         # Image discriminator losses
         image1_list = []
         y1a = results['reconstruction_1']
         image1_list.append(y1a)
-        if x2 is not None:  # 
+        if x2 is not None:
             if 'reconstruction_1_s2_def' in results:
                 y1b = results['reconstruction_1_s2_def']   # s2_def + z1
                 image1_list.append(y1b)
@@ -511,8 +601,9 @@ class DAFNetLightning(BaseMultimodal):
         real_pred_1 = self.d_image1(x1)
         fake_pred_1 = self.d_image1(image1_sampled)
         d_image1_loss = (torch.mean((real_pred_1 - 1) ** 2) + torch.mean(fake_pred_1 ** 2))
-        d_losses.append(d_image1_loss)
-        
+        d_losses['d_image1_loss'] = d_image1_loss
+        total_d_loss += d_image1_loss
+
         if x2 is not None:
             image2_list = []
             y2a = results['reconstruction_2']
@@ -529,9 +620,10 @@ class DAFNetLightning(BaseMultimodal):
             real_pred_2 = self.d_image2(x2)
             fake_pred_2 = self.d_image2(image2_sampled)
             d_image2_loss = (torch.mean((real_pred_2 - 1) ** 2) + torch.mean(fake_pred_2 ** 2))
-            d_losses.append(d_image2_loss)
+            d_losses['d_image2_loss'] = d_image2_loss
+            total_d_loss += d_image2_loss
         
-        return sum(d_losses)
+        return total_d_loss, d_losses
     
     def _generator_step(self, x1, mask1, x2=None, mask2=None, z1_input=None, z2_input=None):
         # Unfreeze generator parameters
@@ -571,9 +663,8 @@ class DAFNetLightning(BaseMultimodal):
         # Adversarial losses
         # Mask adversarial loss
         adv_mask_loss = 0
-        if mask1 is not None and results['segmentation_1'] is not None:
-            fake_mask1_pred = self.d_mask(results['segmentation_1'][:, :self.num_masks])
-            adv_mask_loss += torch.mean((fake_mask1_pred - 1) ** 2)
+        fake_mask1_pred = self.d_mask(results['segmentation_1'][:, :self.num_masks])
+        adv_mask_loss += torch.mean((fake_mask1_pred - 1) ** 2)
             
         if mask2 is not None and results['segmentation_2'] is not None:
             fake_mask2_pred = self.d_mask(results['segmentation_2'][:, :self.num_masks])
@@ -626,8 +717,8 @@ class DAFNetLightning(BaseMultimodal):
         total_loss += self.w_rec_X * rec_loss
         
         # KL divergence losses
-        kl_loss = results['kl_1'] if results['kl_1'] is not None else 0
-        if x2 is not None and results['kl_2'] is not None:
+        kl_loss = results['kl_1']
+        if x2 is not None:
             kl_loss += results['kl_2']
         
         g_losses['kl_loss'] = kl_loss
@@ -645,6 +736,36 @@ class DAFNetLightning(BaseMultimodal):
             total_loss += self.w_rec_Z * z_rec_loss
         
         return total_loss, g_losses
+    
+    def training_step(self, batch, batch_idx):
+        """Training step with adversarial training and SWA support"""
+        # Call parent training step
+        result = super().training_step(batch, batch_idx)
+        
+        # SWA logic
+        if self.use_swa and self.current_epoch >= self.swa_start_epoch:
+            # Initialize SWA models on first epoch after start
+            if not self.swa_initialized:
+                print(f"Initializing SWA models at epoch {self.current_epoch}")
+                self.swa_initialized = True
+            
+            # Update SWA models based on frequency
+            if (self.current_epoch - self.swa_start_epoch) % self.swa_freq == 0:
+                self._update_swa_models()
+                self.log('train/swa_updated', 1.0, on_step=False, on_epoch=True)
+        
+        return result
+    
+    def on_train_epoch_end(self):
+        """Hook called at the end of each training epoch"""
+        super().on_train_epoch_end()
+        
+        # Log SWA status
+        if self.use_swa:
+            if self.current_epoch >= self.swa_start_epoch and self.swa_initialized:
+                self.log('train/swa_active', 1.0, on_epoch=True)
+            else:
+                self.log('train/swa_active', 0.0, on_epoch=True)
 
 
 def mask_converting_show(mask):
