@@ -117,18 +117,3 @@ class ModalityEncoder(nn.Module):
         hidden = self.fc_hidden(features)
         z_mean = self.fc_mean(hidden)
         return z_mean
-    
-    
-if __name__ == '__main__':
-    import sys
-    from configuration.dev_config import get
-    
-    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-    config = get()
-    model = ModalityEncoder(**config['modality_encoder']).to(device)
-    anatomy = torch.randn(2, 8, 128, 128).to(device)
-    image = torch.randn(2, 1, 128, 128).to(device)
-    model = model.to(device)
-    outputs = model(anatomy, image)
-    print(outputs[0].shape)
-    print(outputs[1].item())

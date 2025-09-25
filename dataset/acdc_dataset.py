@@ -102,6 +102,15 @@ class CINEBundleSliceDataset(Data.Dataset):
         self.group2mask = group2mask
         self.N_all = N_all
 
+    def get_valid_indices(self, 
+                          group_keys: Sequence[str],
+                          ) -> List[int]:
+        condition = np.ones_like(self.df_metadata.index, dtype=np.bool_)
+        group_condition = np.stack([self.group2mask[key] for key in group_keys]).sum(axis=0) != 0
+        condition &= group_condition
+        indices = self.df_metadata.index[condition].tolist()
+        indices.sort()
+        return indices
 
     def __getitem__(self, dataset_index: int) -> dict:
 

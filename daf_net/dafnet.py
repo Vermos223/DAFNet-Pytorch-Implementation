@@ -164,7 +164,6 @@ class BaseMultimodal(pl.LightningModule):
     
     @torch.no_grad()
     def validation_step(self, batch, batch_idx):    
-        # prepare the data
         x1 = batch.get(self.modalities[0], None)
         x2 = batch.get(self.modalities[1], None) if len(self.modalities) > 1 else None
         mask1 = batch.get(self.modalities[0] + '_mask')
@@ -225,7 +224,6 @@ class BaseMultimodal(pl.LightningModule):
             log_dict[f'gt_mask_{self.modalities[0]}'] = mask1_rgb
                 
         if mask2_original is not None:
-            # mask2_original 是 [B, H, W]，需要添加通道维度变成 [B, 1, H, W]
             if mask2_original.dim() == 3:  # [B, H, W]
                 mask2_original = mask2_original.unsqueeze(1)  # [B, 1, H, W]
             log_dict[f'gt_mask_{self.modalities[1]}'] = mask_converting_show(mask2_original)
