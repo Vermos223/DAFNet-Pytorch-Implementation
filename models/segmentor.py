@@ -1,3 +1,4 @@
+import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
@@ -28,6 +29,6 @@ class Segmentor(nn.Module):
         logits = self.seg_layers(anatomy_features)
         
         # Apply softmax to get probabilities
-        probabilities = F.softmax(logits, dim=1)
+        probabilities = F.softmax(logits, dim=1)  # [B, num_class, H, W]
         
         return probabilities

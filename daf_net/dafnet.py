@@ -16,7 +16,7 @@ from functions.loss import (
     DiceLoss, CombinedDiceBCELoss, KLDivergenceLoss, 
     MAELoss, IdentityLoss, 
 )
-from functions.utils_code import instantiate_from_config
+from functions.utils_code import instantiate_from_config, mask_process
 
 
 def disabled_train(self, mode=True):
@@ -238,21 +238,17 @@ class BaseMultimodal(pl.LightningModule):
         
         if 'segmentation_1' in results and results['segmentation_1'] is not None:
             #  seg1_rgb = mask_converting_show(results['segmentation_1'])
-            seg1 = results['segmentation_1']
-            if seg1.shape[1] == 4:
-                seg1_class = torch.argmax(seg1, dim=1, keepdim=True).float()  # [B, 1, H, W]
-            else:
-                seg1_class = seg1
+            seg1 = results['segmentation_1']  # B, N_class, H, W
+            seg1_class = torch.argmax(seg1, dim=1).float()  # [B, H, W]
+            seg1_class = mask_process(seg1_class).unsqueeze(1)  # [B, 1, H, W]
             seg1_rgb = mask_converting_show(seg1_class)
             log_dict[f'pred_mask_{self.modalities[0]}'] = seg1_rgb
                 
         if 'segmentation_2' in results and results['segmentation_2'] is not None:
             #  seg2_rgb = mask_converting_show(results['segmentation_2'])
             seg2 = results['segmentation_2']
-            if seg2.shape[1] == 4:
-                seg2_class = torch.argmax(seg2, dim=1, keepdim=True).float()  # [B, 1, H, W]
-            else:
-                seg2_class = seg2
+            seg2_class = torch.argmax(seg2, dim=1).float()  # [B, H, W]
+            seg2_class = mask_process(seg2_class).unsqueeze(1)  # [B, 1, H, W] 
             seg2_rgb = mask_converting_show(seg2_class)
             log_dict[f'pred_mask_{self.modalities[1]}'] = seg2_rgb
         
@@ -351,7 +347,7 @@ class DAFNetLightning(BaseMultimodal):
         # Initialize SWA models if enabled
         if self.use_swa:
             self._build_swa_models()
-    
+
     def _build_discriminators(self):
         # Mask discriminator
         self.d_mask = create_discriminator(**self.d_mask_params)
@@ -780,9 +776,13 @@ def mask_converting_show(mask):
         mask_rgb = torch.zeros(mask.shape[0], 3, mask.shape[2], mask.shape[3], 
                               device=mask.device, dtype=mask.dtype)
         # 0=background, 1=RV, 2=LV, 3=Myocardium
-        mask_rgb[:, 0, :, :] = mask[:, 1, :, :]  # Red for RV
-        mask_rgb[:, 1, :, :] = mask[:, 2, :, :]  # Green for LV  
-        mask_rgb[:, 2, :, :] = mask[:, 3, :, :]  # Blue for Myocardium
+        # in the dataset, first channel represents myo,
+        # channel-1 represents lv,
+        # channel-2 represents rv, 
+        # channel-3 represents bg
+        mask_rgb[:, 0, :, :] = mask[:, 2, :, :]  # Red for RV
+        mask_rgb[:, 1, :, :] = mask[:, 1, :, :]  # Green for LV  
+        mask_rgb[:, 2, :, :] = mask[:, 0, :, :]  # Blue for Myocardium
         
     elif mask.dim() == 4 and mask.shape[1] == 1:  # [B, 1, H, W] - class labels
         mask_rgb = torch.zeros(mask.shape[0], 3, mask.shape[2], mask.shape[3], 

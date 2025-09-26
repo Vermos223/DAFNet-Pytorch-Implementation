@@ -352,26 +352,26 @@ class CINESlices4Segmentation(Data.Dataset):
         # image_location_mask = t_masks[-1]
         
         # background
-        mask_l0 = mask.copy()
-        mask_l0[mask != 0] = 0
-        mask_l0[mask == 0] = 1
+        mask_bg = mask.copy()
+        mask_bg[mask != 0] = 0
+        mask_bg[mask == 0] = 1
 
         # right ventricle
-        mask_l1 = mask.copy()
-        mask_l1[mask != 1] = 0
-        mask_l1[mask == 1] = 1
-
-        # left ventricle
-        mask_l2 = mask.copy()
-        mask_l2[mask != 2] = 0
-        mask_l2[mask == 2] = 1
+        mask_rv = mask.copy()
+        mask_rv[mask != 1] = 0
+        mask_rv[mask == 1] = 1
 
         # myocardium
-        mask_l3 = mask.copy()
-        mask_l3[mask != 3] = 0
-        mask_l3[mask == 3] = 1
+        mask_myo = mask.copy()
+        mask_myo[mask != 2] = 0
+        mask_myo[mask == 2] = 1
+
+        # left ventricle
+        mask_lv = mask.copy()
+        mask_lv[mask != 3] = 0
+        mask_lv[mask == 3] = 1
         
-        mask_concat = np.stack([mask_l0, mask_l1, mask_l2, mask_l3], axis=0)
+        mask_concat = np.stack([mask_lv, mask_myo, mask_rv, mask_bg], axis=0)
         
         z_input = norm.sample(self.modality_vec_dim)
         sample = {
