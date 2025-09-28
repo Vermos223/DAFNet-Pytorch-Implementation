@@ -352,14 +352,14 @@ class CINESlices4Segmentation(Data.Dataset):
         # image_location_mask = t_masks[-1]
         
         # background
-        mask_bg = mask.copy()
-        mask_bg[mask != 0] = 0
-        mask_bg[mask == 0] = 1
+        # mask_bg = mask.copy()
+        # mask_bg[mask != 0] = 0
+        # mask_bg[mask == 0] = 1
 
         # right ventricle
-        mask_rv = mask.copy()
-        mask_rv[mask != 1] = 0
-        mask_rv[mask == 1] = 1
+        # mask_rv = mask.copy()
+        # mask_rv[mask != 1] = 0
+        # mask_rv[mask == 1] = 1
 
         # myocardium
         mask_myo = mask.copy()
@@ -371,15 +371,16 @@ class CINESlices4Segmentation(Data.Dataset):
         mask_lv[mask != 3] = 0
         mask_lv[mask == 3] = 1
         
-        mask_concat = np.stack([mask_lv, mask_myo, mask_rv, mask_bg], axis=0)
+        # mask_concat = np.stack([mask_lv, mask_myo, mask_rv], axis=0)
+        mask_concat = np.stack([mask_lv, mask_myo], axis=0)
         
         z_input = norm.sample(self.modality_vec_dim)
         sample = {
             'sample_identifier': sample_identifier,
             'cine': image[None, :, :].astype(np.float32, copy=False),  # [C=1, H, W]
             # 'image_location_mask': image_location_mask.astype(bool, copy=False),  # [H, W]
-            'cine_mask_original': mask[None, ...].astype(np.float32, copy=False),  # [H, W]
-            'cine_mask': mask_concat.astype(np.float32, copy=False),  # [C=4, H, W]
+            # 'cine_mask_original': mask[None, ...].astype(np.float32, copy=False),  # [H, W]
+            'cine_mask': mask_concat.astype(np.float32, copy=False),  # [C=3, H, W]
             'cine_z_input': z_input.astype(np.float32, copy=False),  # [modality_vec_dim,]
             
             # modality 2 test

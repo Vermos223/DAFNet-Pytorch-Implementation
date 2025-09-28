@@ -1,9 +1,9 @@
 model:
-  base_learning_rate: 1e-4   # set to target_lr by starting main.py with '--scale_lr False'
+  base_learning_rate: 1e-4
   target: daf_net.dafnet.DAFNetLightning
   params:
     modalities: ['cine']
-    num_masks: 4
+    num_masks: 2
     learning_rate: 1e-4
     automated_pairing: false
     use_swa: true
@@ -21,17 +21,13 @@ model:
         f_max: [1.]
         f_min: [1.]
 
-    loss_config:
+    loss_weights:
       w_sup_M: 10.0
       w_adv_M: 1.0
       w_rec_X: 1.0
       w_adv_X: 1.0
       w_kl: 0.1
       w_rec_Z: 1.0
-      # use_enhanced_loss: true  # 启用增强损失函数，包含平滑性约束
-      # lambda_tv: 0.1           # Total Variation损失权重，控制平滑度
-      # lambda_boundary: 0.05    # 边界损失权重，改善边界连贯性
-      restrict_channels: 3
     
     anatomy_encoder_config:
       target: models.anatomy_encoder.AnatomyEncoders
@@ -59,7 +55,7 @@ model:
       target: models.segmentor.Segmentor
       params:
         in_channels: 8
-        num_classes: 4
+        num_classes: 2
         base_channels: 64
     
     # decoder_params_config:
@@ -95,7 +91,7 @@ model:
     d_mask_params:
       #  target: models.discriminator.BaseDiscriminator
       # params:
-        in_channels: 4
+        in_channels: 2
         resolution: 192
         base_channels: 16
         ch_mult: [1, 2, 4, 8]
@@ -112,8 +108,8 @@ model:
 data:
   target: dataset.data_module.ACDCSegmentationDataModule
   params:
-    dataset_dirpath: /public_bme2/bme-qihk/liaohx/PROJECTS/Multimodality_Segmentation/Data/ACDCSingleSliceDataset
-    batch_size: 48
+    dataset_dirpath: /data2/liaohx/Projects/ACDCDataset/ACDCSingleSliceDataset
+    batch_size: 24
     num_workers: 8
     is_roi_resample: True
     roi_fixed_pixel_spacing: [0.89, 0.89]
@@ -142,7 +138,7 @@ data:
       params:
         persistent_workers: False
         pin_memory: False
-        shuffle: False
+        shuffle: True
     test:
       params:
         persistent_workers: False
@@ -156,7 +152,7 @@ lightning:
       target: main.ImageLogger
       params:
         clamp: False
-        batch_frequency: 500
+        batch_frequency: 1000
         max_images: 16
         increase_log_steps: False # False
         rescale: False

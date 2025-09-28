@@ -28,25 +28,26 @@ def disabled_train(self, mode=True):
 
 
 class BaseMultimodal(pl.LightningModule):
-    def __init__(self, base_learning_rate, loss_config, scheduler_config=None):
+    def __init__(self, base_learning_rate, num_masks, loss_weights, scheduler_config=None):
         super(BaseMultimodal, self).__init__()
         self.save_hyperparameters()
-        self._initialize_losses(**loss_config)
-        
+        self.num_masks = num_masks
+        self.loss_weights = loss_weights
         self.automatic_optimization = False
         self.scheduler_config = scheduler_config
         self.base_learning_rate = float(base_learning_rate)
-           
-    def _initialize_losses(self, w_sup_M, w_adv_M, w_rec_X, w_adv_X, w_kl, w_rec_Z, restrict_channels=4):    
-        self.register_buffer('w_sup_M', torch.tensor(w_sup_M))
-        self.register_buffer('w_adv_M', torch.tensor(w_adv_M))
-        self.register_buffer('w_rec_X', torch.tensor(w_rec_X))
-        self.register_buffer('w_adv_X', torch.tensor(w_adv_X))
-        self.register_buffer('w_kl', torch.tensor(w_kl))
-        self.register_buffer('w_rec_Z', torch.tensor(w_rec_Z))
         
-        self.dice_loss = DiceLoss(restrict_channels)
-        self.combined_dice_bce = CombinedDiceBCELoss(num_classes=restrict_channels)
+        self._initialize_losses(**self.loss_weights)
+        self._init_loss_functions(self.num_masks) 
+        
+    def _initialize_losses(self, **kwargs):
+        for name, weight in kwargs.items():
+            if name.startswith('w_'):
+                self.register_buffer(name, torch.tensor(weight))
+
+    def _init_loss_functions(self, num_masks):
+        self.dice_loss = DiceLoss(num_masks)
+        self.combined_dice_bce = CombinedDiceBCELoss(num_classes=num_masks)
         self.kl_loss = KLDivergenceLoss()
         self.mae_loss = MAELoss()
         self.mse_loss = torch.nn.MSELoss()
@@ -112,8 +113,9 @@ class BaseMultimodal(pl.LightningModule):
         x1 = batch.get(self.modalities[0], None)
         x2 = batch.get(self.modalities[1], None) if len(self.modalities) > 1 else None
         mask1 = batch.get(self.modalities[0] + '_mask')
+        mask1 = self.add_residual(mask1)  # B, num_class+1, H, W
         mask2 = batch.get(self.modalities[1] + '_mask') if len(self.modalities) > 1 else None
-        
+        mask2 = self.add_residual(mask2) if mask2 is not None else None # B, num_class+1, H, W
         z1_input = batch.get(f'{self.modalities[0]}_z_input', None)
         z2_input = batch.get(f'{self.modalities[1]}_z_input', None) if len(self.modalities) > 1 else None
         
@@ -165,12 +167,22 @@ class BaseMultimodal(pl.LightningModule):
         """Generator training step - to be implemented by subclasses"""
         pass
     
+    def add_residual(self, data):  # data: B, H, W, num_classes
+        B, C, H, W = data.shape
+        device = data.device
+        residual = torch.ones((B, 1, H, W), device=device)  # B, 1, H, W
+        for i in range(C):
+            residual[data[:, i:i+1, :, :] == 1] = 0  # set the residual to 0 where the mask is 1, which is to create a mask for background
+        return torch.cat([data, residual], dim=1)
+    
     @torch.no_grad()
     def validation_step(self, batch, batch_idx):    
         x1 = batch.get(self.modalities[0], None)
         x2 = batch.get(self.modalities[1], None) if len(self.modalities) > 1 else None
-        mask1 = batch.get(self.modalities[0] + '_mask')
+        mask1 = batch.get(self.modalities[0] + '_mask')  # B, num_class, H, W
+        mask1 = self.add_residual(mask1)  # B, num_class+1, H, W
         mask2 = batch.get(self.modalities[1] + '_mask') if len(self.modalities) > 1 else None
+        mask2 = self.add_residual(mask2) if mask2 is not None else None
         
         z1_input = batch.get(f'{self.modalities[0]}_z_input', None)
         z2_input = batch.get(f'{self.modalities[1]}_z_input', None) if len(self.modalities) > 1 else None
@@ -202,8 +214,10 @@ class BaseMultimodal(pl.LightningModule):
     def log_images(self, batch, split="train", **kwargs):
         x1 = batch.get(self.modalities[0], None)
         x2 = batch.get(self.modalities[1], None) if len(self.modalities) > 1 else None
-        mask1 = batch.get(self.modalities[0] + '_mask')
+        mask1 = batch.get(self.modalities[0] + '_mask')  # B, num_class, H, W
+        mask1 = self.add_residual(mask1)  # B, num_class+1, H, W
         mask2 = batch.get(self.modalities[1] + '_mask') if len(self.modalities) > 1 else None
+        mask2 = self.add_residual(mask2) if mask2 is not None else None  # B, num_class+1, H, W
         
         z1_input = batch.get(f'{self.modalities[0]}_z_input', None)
         z2_input = batch.get(f'{self.modalities[1]}_z_input', None) if len(self.modalities) > 1 else None
@@ -217,23 +231,11 @@ class BaseMultimodal(pl.LightningModule):
         if x2 is not None:
             log_dict[f'input_{self.modalities[1]}'] = x2
             
-        mask1_original = batch.get(self.modalities[0] + '_mask_original', None)
-        mask2_original = batch.get(self.modalities[1] + '_mask_original', None) if len(self.modalities) > 1 else None
-        
-        if mask1_original is not None:
-            if mask1_original.dim() == 3:  # [B, H, W]
-                mask1_original = mask1_original.unsqueeze(1)  # [B, 1, H, W]
-            log_dict[f'gt_mask_{self.modalities[0]}'] = mask_converting_show(mask1_original)
-        elif mask1 is not None:
-            mask1_rgb = mask_converting_show(mask1)
-            log_dict[f'gt_mask_{self.modalities[0]}'] = mask1_rgb
-                
-        if mask2_original is not None:
-            if mask2_original.dim() == 3:  # [B, H, W]
-                mask2_original = mask2_original.unsqueeze(1)  # [B, 1, H, W]
-            log_dict[f'gt_mask_{self.modalities[1]}'] = mask_converting_show(mask2_original)
-        elif mask2 is not None:
-            mask2_rgb = mask_converting_show(mask2)
+        mask1_rgb = mask_converting_show(torch.argmax(mask1, dim=1, keepdim=True).float())
+        log_dict[f'gt_mask_{self.modalities[0]}'] = mask1_rgb
+
+        if mask2 is not None:
+            mask2_rgb = mask_converting_show(torch.argmax(mask2, dim=1, keepdim=True).float())
             log_dict[f'gt_mask_{self.modalities[1]}'] = mask2_rgb
         
         if 'segmentation_1' in results and results['segmentation_1'] is not None:
@@ -296,7 +298,7 @@ class DAFNetLightning(BaseMultimodal):
     def __init__(self,
                  modalities,
                  num_masks,
-                 loss_config,
+                 loss_weights,
                  anatomy_encoder_config,
                  modality_encoder_config,
                  segmentor_params_config,
@@ -312,12 +314,12 @@ class DAFNetLightning(BaseMultimodal):
                  swa_start_epoch=40,
                  swa_freq=1,
                  **kwargs):
-        super(DAFNetLightning, self).__init__(learning_rate, loss_config, scheduler_config)
+        super(DAFNetLightning, self).__init__(learning_rate, num_masks, loss_weights, scheduler_config)
         
         self.modalities = modalities
         self.num_masks = num_masks
         self.automated_pairing = automated_pairing
-        self.loss_config = loss_config
+        self.loss_weights = loss_weights
         
         self.d_mask_params = d_mask_params
         self.d_image_params = d_image_params
@@ -524,7 +526,7 @@ class DAFNetLightning(BaseMultimodal):
         
         return results
 
-    def _discriminator_step(self, x1, mask1=None, x2=None, mask2=None, z1_input=None, z2_input=None):
+    def _discriminator_step(self, x1, mask1, x2=None, mask2=None, z1_input=None, z2_input=None):
         # Freeze generator parameters
         self._make_trainable(self.anatomy_encoders, False)
         self._make_trainable(self.modality_encoder, False)
@@ -548,34 +550,33 @@ class DAFNetLightning(BaseMultimodal):
         
         # Mask discriminator loss
         # Modality 1
-        m1 = mask1[:, :self.num_masks]
         fake_m1_list = []
-        fake_m1 = results['segmentation_1'][:, :self.num_masks].detach()
+        fake_m1 = results['segmentation_1'].detach()
         fake_m1_list.append(fake_m1)
         if x2 is not None and 'segmentation_1_s2_def' in results:
-            fake_m1_from_s2_def = results['segmentation_1_s2_def'][:, :self.num_masks].detach()
+            fake_m1_from_s2_def = results['segmentation_1_s2_def'].detach()
             fake_m1_list.append(fake_m1_from_s2_def)
         fake_masks1 = torch.cat(fake_m1_list, dim=0)
-        fake_masks1 = self._sample_batch(fake_masks1, m1.shape[0])
-        real_pred1 = self.d_mask(m1)
-        fake_pred1 = self.d_mask(fake_masks1)
+        fake_masks1 = self._sample_batch(fake_masks1, mask1.shape[0])
+        real_pred1 = self.d_mask(mask1[:, :self.num_masks])
+        fake_pred1 = self.d_mask(fake_masks1[:, :self.num_masks])
         d_mask_loss1 = torch.mean((real_pred1 - 1) ** 2) + torch.mean(fake_pred1 ** 2)
         d_losses['d_mask_loss'] = d_mask_loss1
         total_d_loss += d_mask_loss1
         
         # Modality 2
         if x2 is not None:
-            m2 = mask2[:, :self.num_masks] if mask2 is not None else mask1[:, :self.num_masks]
+            m2 = mask2 if mask2 is not None else mask1
             fake_m2_list = []
-            fake_m2 = results['segmentation_2'][:, :self.num_masks].detach()
+            fake_m2 = results['segmentation_2'].detach()
             fake_m2_list.append(fake_m2)
             if 'segmentation_2_s1_def' in results:
-                fake_m2_from_s1_def = results['segmentation_2_s1_def'][:, :self.num_masks].detach()
+                fake_m2_from_s1_def = results['segmentation_2_s1_def'].detach()
                 fake_m2_list.append(fake_m2_from_s1_def)
             fake_mask2 = torch.cat(fake_m2_list, dim=0)
             fake_mask2 = self._sample_batch(fake_mask2, m2.shape[0])
-            real_pred2 = self.d_mask(m2)
-            fake_pred2 = self.d_mask(fake_mask2)
+            real_pred2 = self.d_mask(m2[:, :self.num_masks])
+            fake_pred2 = self.d_mask(fake_mask2[:, :self.num_masks])
             d_mask_loss2 = (torch.mean((real_pred2 - 1) ** 2) + torch.mean(fake_pred2 ** 2))
             d_losses['d_mask_loss'] += d_mask_loss2
             total_d_loss += d_mask_loss2
@@ -764,47 +765,64 @@ class DAFNetLightning(BaseMultimodal):
                 self.log('train/swa_active', 0.0, on_epoch=True)
 
 
-def mask_converting_show(mask):
+def mask_converting_show(mask, class_colors=None):
     """
-    Convert mask to RGB visualization
+    Convert mask to RGB visualization with better color mapping
+    
     Args:
-        mask: [B, C, H, W] where C=4 (one-hot) or C=1 (class labels)
+        mask: [B, 1, H, W] class labels format
+        class_colors: Optional dict of RGB colors for each class. If None, uses default colors.
     Returns:
         mask_rgb: [B, 3, H, W] RGB visualization
     """
-    if mask.dim() == 4 and mask.shape[1] == 4:  # [B, 4, H, W] - one-hot format
-        mask_rgb = torch.zeros(mask.shape[0], 3, mask.shape[2], mask.shape[3], 
-                              device=mask.device, dtype=mask.dtype)
-        # 0=background, 1=RV, 2=LV, 3=Myocardium
-        # in the dataset, first channel represents myo,
-        # channel-1 represents lv,
-        # channel-2 represents rv, 
-        # channel-3 represents bg
-        mask_rgb[:, 0, :, :] = mask[:, 2, :, :]  # Red for RV
-        mask_rgb[:, 1, :, :] = mask[:, 1, :, :]  # Green for LV  
-        mask_rgb[:, 2, :, :] = mask[:, 0, :, :]  # Blue for Myocardium
+    if mask.dim() != 4:
+        raise ValueError(f"Mask must be 4D tensor, got {mask.dim()}D")
+    
+    B, C, H, W = mask.shape
+    if C != 1:
+        raise ValueError(f"Expected mask shape [B, 1, H, W], got {mask.shape}")
+    
+    device = mask.device
+    dtype = mask.dtype
+    
+    # Initialize RGB output (black background)
+    mask_rgb = torch.zeros(B, 3, H, W, device=device, dtype=dtype)
+    
+    mask_squeeze = mask.squeeze(1)  # [B, H, W]
+    unique_classes = torch.unique(mask_squeeze)
+    
+    # Default color scheme
+    if class_colors is None:
+        default_colors = {
+            0: [1.0, 1.0, 0.0],  # yello for class 0
+            1: [0.0, 0.0, 1.0],  # blue for class 1
+            2: [1.0, 0.0, 0.0],  # red for class 2
+            3: [1.0, 1.0, 0.0],  # yellow for class 3
+            4: [1.0, 0.0, 1.0],  # magenta for class 4
+            5: [0.0, 1.0, 1.0],  # cyan for class 5
+            'bg': [0.0, 0.0, 0.0],  # black for background
+        }
+        class_colors = default_colors
+    
+    max_class = torch.max(unique_classes).item()
+    
+    # Map each class to its color
+    for class_id in unique_classes:
+        class_id_val = class_id.item()
         
-    elif mask.dim() == 4 and mask.shape[1] == 1:  # [B, 1, H, W] - class labels
-        mask_rgb = torch.zeros(mask.shape[0], 3, mask.shape[2], mask.shape[3], 
-                              device=mask.device, dtype=mask.dtype)
-        # Create boolean masks for each class
-        mask_squeeze = mask.squeeze(1)  # [B, H, W]
-        rv_mask = (mask_squeeze == 1)   # [B, H, W]
-        lv_mask = (mask_squeeze == 2)
-        myo_mask = (mask_squeeze == 3)
-        
-        mask_rgb[:, 0, :, :] = rv_mask.float()   # Red for RV
-        mask_rgb[:, 1, :, :] = lv_mask.float()  # Green for LV
-        mask_rgb[:, 2, :, :] = myo_mask.float()  # Blue for Myocardium
-        
-        # Debug: check if we have any non-zero pixels
-        total_pixels = torch.sum(rv_mask) + torch.sum(lv_mask) + torch.sum(myo_mask)
-        if total_pixels == 0:
-            print(f"Warning: No non-background pixels found in mask. "
-                  f"Unique values: {torch.unique(mask_squeeze)}")
-        
-    else:
-        raise ValueError(f"Mask dimension must be 4 and shape must be [B, 4, H, W] or [B, 1, H, W], but got {mask.shape}")
+        if class_id_val == max_class:
+            class_id_val = 'bg'
+            
+        if class_id_val in class_colors:
+            color = class_colors[class_id_val]
+            class_mask = (mask_squeeze == class_id).float()
+            
+            # Add this class's contribution to each RGB channel
+            for rgb_idx in range(3):
+                mask_rgb[:, rgb_idx, :, :] += class_mask * color[rgb_idx]
+    
+    # Clamp values to [0, 1] range
+    mask_rgb = torch.clamp(mask_rgb, 0, 1)
     
     return mask_rgb
 

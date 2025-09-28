@@ -22,13 +22,13 @@ class Segmentor(nn.Module):
             nn.BatchNorm2d(base_channels // 2),
             nn.ReLU(inplace=True),
             
-            nn.Conv2d(base_channels // 2, num_classes, 1, padding=0)
+            nn.Conv2d(base_channels // 2, num_classes+1, 1, padding=0)  # add one anthor channel for background
         )
         
     def forward(self, anatomy_features):
         logits = self.seg_layers(anatomy_features)
         
         # Apply softmax to get probabilities
-        probabilities = F.softmax(logits, dim=1)  # [B, num_class, H, W]
+        probabilities = F.softmax(logits, dim=1)  # [B, num_class+1, H, W]
         
         return probabilities
