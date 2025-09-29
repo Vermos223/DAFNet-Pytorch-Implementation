@@ -1,5 +1,5 @@
 model:
-  base_learning_rate: 1e-4   # set to target_lr by starting main.py with '--scale_lr False'
+  base_learning_rate: 1e-4
   target: daf_net.dafnet.DAFNetLightning
   params:
     modalities: ['cine']
@@ -44,7 +44,7 @@ model:
     modality_encoder_config:
       target: models.modality_encoder.ModalityEncoder
       params:
-        resolution: 128
+        resolution: 192
         in_channels: 1
         base_channels: 64
         anatomy_channels: 8
@@ -74,7 +74,7 @@ model:
       params:
         decoder_type: spade
         decoder_params:
-            resolution: 128  # the spatial resolution of the anatomy factor/ or the image
+            resolution: 192  # the spatial resolution of the anatomy factor/ or the image
             base_channels: 128  # base channels of the SPADE blocks
             condition_channels: 8  # the anatomy factor will be set as the condition, the channels are equal to the number of anatomy factors
             ch_div: [1, 1, 1, 2, 4, 4]  # the channels division of the SPADE blocks
@@ -84,7 +84,7 @@ model:
       target: models.anatomy_fuser.AnatomyFuser
       params:
         in_channels: 8
-        resolution: 128
+        resolution: 192
         control_points: [5, 5]
         order: 2
     
@@ -92,7 +92,7 @@ model:
       #  target: models.discriminator.BaseDiscriminator
       # params:
         in_channels: 3
-        resolution: 128
+        resolution: 192
         base_channels: 16
         ch_mult: [1, 2, 4, 8]
         use_spectral_norm: True
@@ -100,7 +100,7 @@ model:
     d_image_params:
       # params:
         in_channels: 1
-        resolution: 128
+        resolution: 192
         base_channels: 16
         ch_mult: [1, 2, 4, 8, 16]
         use_spectral_norm: True
@@ -110,11 +110,11 @@ data:
   params:
     dataset_dirpath: /public_bme2/bme-qihk/liaohx/PROJECTS/Multimodality_Segmentation/Data/ACDCSingleSliceDataset
     batch_size: 36
-    num_workers: 4
+    num_workers: 8
     without_rightventricular: False
     is_roi_resample: True
     roi_fixed_pixel_spacing: [0.89, 0.89]
-    roi_resample_size: [128, 128]
+    roi_resample_size: [192, 192]
     modality_vec_dim: 8
     training_groups: [
       'ACDC_Batch_0',
@@ -139,7 +139,7 @@ data:
       params:
         persistent_workers: False
         pin_memory: False
-        shuffle: False
+        shuffle: True
     test:
       params:
         persistent_workers: False
@@ -153,7 +153,7 @@ lightning:
       target: main.ImageLogger
       params:
         clamp: False
-        batch_frequency: 100
+        batch_frequency: 1000
         max_images: 16
         increase_log_steps: False # False
         rescale: False

@@ -108,9 +108,10 @@ model:
 data:
   target: dataset.data_module.ACDCSegmentationDataModule
   params:
-    dataset_dirpath: /data2/liaohx/Projects/ACDCDataset/ACDCSingleSliceDataset
-    batch_size: 24
+    dataset_dirpath: /public_bme2/bme-qihk/liaohx/PROJECTS/Multimodality_Segmentation/Data/ACDCSingleSliceDataset
+    batch_size: 48
     num_workers: 8
+    without_rightventricular: True
     is_roi_resample: True
     roi_fixed_pixel_spacing: [0.89, 0.89]
     roi_resample_size: [192, 192]
@@ -131,7 +132,7 @@ data:
       ]
     train:
       params:
-        persistent_workers: True
+        persistent_workers: False
         pin_memory: False
         shuffle: True
     validation:

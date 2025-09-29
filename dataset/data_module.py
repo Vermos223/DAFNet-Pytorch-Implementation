@@ -11,6 +11,7 @@ class ACDCSegmentationDataModule(pl.LightningDataModule):
                  dataset_dirpath,
                  batch_size,
                  num_workers,
+                 without_rightventricular,
                  is_roi_resample=True,
                  roi_fixed_pixel_spacing=(0.89, 0.89),
                  roi_resample_size=(128, 128),
@@ -27,6 +28,7 @@ class ACDCSegmentationDataModule(pl.LightningDataModule):
         
         # data preprocess
         self.dataset_dirpath = dataset_dirpath
+        self.without_rightventricular = without_rightventricular
         self.roi_fixed_pixel_spacing = roi_fixed_pixel_spacing
         self.roi_resample_size = roi_resample_size
         self.is_roi_resample = is_roi_resample
@@ -105,7 +107,8 @@ class ACDCSegmentationDataModule(pl.LightningDataModule):
                                   is_roi_resample = self.is_roi_resample,
                                   roi_resample_size = self.roi_resample_size,
                                   roi_fixed_pixel_spacing = self.roi_fixed_pixel_spacing,
-                                  modality_vec_dim = self.modality_vec_dim
+                                  modality_vec_dim = self.modality_vec_dim,
+                                  without_rightventricular=self.without_rightventricular
                                   )
         return dataset
 

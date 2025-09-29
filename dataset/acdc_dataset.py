@@ -224,6 +224,7 @@ class CINESlices4Segmentation(Data.Dataset):
                  index2slice_dataset: Data.Dataset,
                  *,
                  is_augmentation: bool = False,
+                 without_rightventricular: bool = False,
                  is_roi_resample=True,
                  roi_resample_size=(128, 128),  # [width (x), height (y)]
                  roi_fixed_pixel_spacing: Tuple[float, float] = (0.89, 0.89),  # in x (column) and y (row) order
@@ -235,6 +236,7 @@ class CINESlices4Segmentation(Data.Dataset):
         self.roi_resample_size = roi_resample_size
         self.roi_fixed_pixel_spacing = roi_fixed_pixel_spacing
         self.modality_vec_dim = modality_vec_dim
+        self.without_rightventricular = without_rightventricular
         self.T = AffineAugmentation(mode='train' if is_augmentation else 'val')
 
     def crop_and_resize_to_roi(self, images: np.ndarray, bbox):
@@ -357,9 +359,9 @@ class CINESlices4Segmentation(Data.Dataset):
         # mask_bg[mask == 0] = 1
 
         # right ventricle
-        # mask_rv = mask.copy()
-        # mask_rv[mask != 1] = 0
-        # mask_rv[mask == 1] = 1
+        mask_rv = mask.copy()
+        mask_rv[mask != 1] = 0
+        mask_rv[mask == 1] = 1
 
         # myocardium
         mask_myo = mask.copy()
@@ -372,7 +374,10 @@ class CINESlices4Segmentation(Data.Dataset):
         mask_lv[mask == 3] = 1
         
         # mask_concat = np.stack([mask_lv, mask_myo, mask_rv], axis=0)
-        mask_concat = np.stack([mask_lv, mask_myo], axis=0)
+        if self.without_rightventricular:
+            mask_concat = np.stack([mask_lv, mask_myo], axis=0)
+        else:
+            mask_concat = np.stack([mask_lv, mask_myo, mask_rv], axis=0)
         
         z_input = norm.sample(self.modality_vec_dim)
         sample = {

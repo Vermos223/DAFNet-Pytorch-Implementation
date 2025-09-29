@@ -3,7 +3,7 @@ model:
   target: daf_net.dafnet.DAFNetLightning
   params:
     modalities: ['cine']
-    num_masks: 3
+    num_masks: 2
     learning_rate: 1e-4
     automated_pairing: false
     use_swa: true
@@ -55,7 +55,7 @@ model:
       target: models.segmentor.Segmentor
       params:
         in_channels: 8
-        num_classes: 3
+        num_classes: 2
         base_channels: 64
     
     # decoder_params_config:
@@ -91,7 +91,7 @@ model:
     d_mask_params:
       #  target: models.discriminator.BaseDiscriminator
       # params:
-        in_channels: 3
+        in_channels: 2
         resolution: 128
         base_channels: 16
         ch_mult: [1, 2, 4, 8]
@@ -109,9 +109,9 @@ data:
   target: dataset.data_module.ACDCSegmentationDataModule
   params:
     dataset_dirpath: /public_bme2/bme-qihk/liaohx/PROJECTS/Multimodality_Segmentation/Data/ACDCSingleSliceDataset
-    batch_size: 36
-    num_workers: 4
-    without_rightventricular: False
+    batch_size: 24
+    num_workers: 8
+    without_rightventricular: True
     is_roi_resample: True
     roi_fixed_pixel_spacing: [0.89, 0.89]
     roi_resample_size: [128, 128]
@@ -132,7 +132,7 @@ data:
       ]
     train:
       params:
-        persistent_workers: True
+        persistent_workers: False
         pin_memory: False
         shuffle: True
     validation:
