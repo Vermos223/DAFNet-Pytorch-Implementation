@@ -15,16 +15,8 @@ from torch.utils import data as Data
 
 import numpy as np
 import numba
+from .utils import NormalDistribution
 
-class NormalDistribution(object):
-    def __init__(self):
-        self.mu = 0
-        self.sigma = 1
-
-    def sample(self, N):
-        samples = np.random.normal(self.mu, self.sigma, N)
-        return samples
-    
 norm = NormalDistribution()
 
 

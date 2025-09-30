@@ -553,7 +553,7 @@ class DAFNetLightning(BaseMultimodal):
         fake_m1_list = []
         fake_m1 = results['segmentation_1'].detach()
         fake_m1_list.append(fake_m1)
-        if x2 is not None and 'segmentation_1_s2_def' in results:
+        if 'segmentation_1_s2_def' in results:
             fake_m1_from_s2_def = results['segmentation_1_s2_def'].detach()
             fake_m1_list.append(fake_m1_from_s2_def)
         fake_masks1 = torch.cat(fake_m1_list, dim=0)
@@ -663,7 +663,7 @@ class DAFNetLightning(BaseMultimodal):
         fake_mask1_pred = self.d_mask(results['segmentation_1'][:, :self.num_masks])
         adv_mask_loss += torch.mean((fake_mask1_pred - 1) ** 2)
             
-        if mask2 is not None and results['segmentation_2'] is not None:
+        if results['segmentation_2'] is not None:
             fake_mask2_pred = self.d_mask(results['segmentation_2'][:, :self.num_masks])
             adv_mask_loss += torch.mean((fake_mask2_pred - 1) ** 2)
         

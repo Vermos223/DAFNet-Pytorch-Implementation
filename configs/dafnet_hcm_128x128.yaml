@@ -2,7 +2,7 @@ model:
   base_learning_rate: 1e-4   # set to target_lr by starting main.py with '--scale_lr False'
   target: daf_net.dafnet.DAFNetLightning
   params:
-    modalities: ['cine']
+    modalities: ['cine', 'psir']
     num_masks: 2
     learning_rate: 1e-4
     automated_pairing: false
@@ -89,8 +89,6 @@ model:
         order: 2
     
     d_mask_params:
-      #  target: models.discriminator.BaseDiscriminator
-      # params:
         in_channels: 2
         resolution: 128
         base_channels: 16
@@ -98,7 +96,6 @@ model:
         use_spectral_norm: True
     
     d_image_params:
-      # params:
         in_channels: 1
         resolution: 128
         base_channels: 16
@@ -106,33 +103,53 @@ model:
         use_spectral_norm: True
 
 data:
-  target: dataset.data_module.ACDCSegmentationDataModule
+  target: dataset.inhouse_module.HCMDataModule
   params:
-    dataset_dirpath: /public_bme2/bme-qihk/liaohx/PROJECTS/Multimodality_Segmentation/Data/ACDCSingleSliceDataset
-    batch_size: 16
-    num_workers: 2
+    dataset_type: HCM
+    mandatory_protocols: ['cine', 'psir']
+    dataset_dirpath: /public_bme2/bme-qihk/liaohx/PROJECTS/Cine_Generated_Enhancement/Data/RENJI_HCM
+    batch_size: 48
+    num_workers: 8
     without_rightventricular: True
-    is_roi_resample: True
     roi_fixed_pixel_spacing: [0.89, 0.89]
     roi_resample_size: [128, 128]
     modality_vec_dim: 8
     training_groups: [
-      'ACDC_Batch_0',
-      'ACDC_Batch_1',
-      'ACDC_Batch_2',
-      'ACDC_Batch_3',
-      'ACDC_Batch_4',
-      'ACDC_Batch_5',
-      'ACDC_Batch_6',
-      'ACDC_Batch_7',
-      'ACDC_Batch_8',
+      'internal_8',
+      'internal_9',
+      'RJ_external_0',
+      'internal_0',
+      'internal_1',
+      'internal_2',
+      'internal_3',
+      'internal_4',
+      'internal_5',
+      'internal_6',
+      'internal_7',
       ]
     testing_groups: [
-      'ACDC_Batch_9',
+      'internal_8',
+      'internal_9',
+      'RJ_external_0',
       ]
+    train_criteria: [
+      'basic',
+      'high_quality_cine',
+      'acceptable_psir',
+      'cine_strictly_aligned',
+      'without_apex_position',
+      'without_base_position',
+      ]
+    test_criteria: [
+    'basic',
+    'high_quality_cine',
+    'cine_strictly_aligned',
+    'without_apex_position',
+    'without_base_position',
+    ]
     train:
       params:
-        persistent_workers: False
+        persistent_workers: True
         pin_memory: False
         shuffle: True
     validation:
@@ -146,16 +163,15 @@ data:
         pin_memory: False
         shuffle: False
 
-
 lightning:
   callbacks:
     image_logger:
       target: main.ImageLogger
       params:
         clamp: False
-        batch_frequency: 500
+        batch_frequency: 200
         max_images: 16
-        increase_log_steps: False # False
+        increase_log_steps: False
         rescale: False
         log_first_step: True
         log_images_kwargs:
